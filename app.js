@@ -142,14 +142,14 @@ function renderTeacher() {
   app.innerHTML = '<div class="row tabs">' + tabs.map(([id,label]) => btn('tab-'+id,label,view===id?'primary':'')).join('') + btn('backup','수업 백업') + '</div>' +
     '<p class="eyebrow">TEACHER’S GALLERY · '+escape(room.title)+' · <span id="host-status">'+escape(hostMessage)+'</span></p>' +
     (demo ? '<div class="banner row">교사 체험 · 예시 작품과 응답은 실제 수업과 분리돼요. '+btn('demo-student','학생 화면도 보기')+'</div>' : '') +
-    '<h1>우리 반이 둥둥 떠올라요.</h1><p>작품 '+items.length+' / '+room.roster.length+'개 · '+(room.mode==='random'?'비밀 랜덤 배정':'자유롭게 선택')+' · '+(room.scoring?'점수 모으기':'함께 맞히기')+'</p>' +
+    '<h1>우리 반 그림이 둥둥 떠올라요.</h1><p>작품 '+items.length+' / '+room.roster.length+'개 · '+(room.mode==='random'?'비밀 랜덤 배정':'자유롭게 선택')+' · '+(room.scoring?'점수 모으기':'함께 맞히기')+'</p>' +
     '<div class="row">'+btn('invite','초대하기 · '+room.code,'primary')+btn('fullscreen','전체 화면')+' <small id="save-status"></small></div>';
   if (view === 'roster' || view === 'scores') {
     app.insertAdjacentHTML('beforeend','<section class="card"><h2>'+(view==='roster'?'우리 반':'퀴즈 점수')+'</h2><ul class="list">'+room.roster.map(p => '<li><strong>'+escape(p.name)+'</strong><span>'+(view==='roster'?(demo||links.has(p.id)?'입장 · ':'')+(room.works[p.id]?'제출 완료':'제출 대기'):(room.scoring?(room.scores[p.id]||0)+'점':'함께 맞히기 모드'))+'</span></li>').join('')+'</ul></section>');
     return;
   }
   const gallery = items.length ? items.map((w,i) => egg(w.revealed ? w.answer : artwork(i),w.img,i,'work')).join('') : '<p>학생이 그림을 보내면 여기에 떠올라요.</p>';
-  const controls = view === 'float' ? '<div class="row tabs">'+[['bob','둥둥'],['orbit','우주 여행'],['train','그림 기차'],['carousel','회전목마']].map(([id,label])=>btn('motion-'+id,label,motion===id?'primary':'')).join('')+btn('pause',paused?'움직임 재생':'움직임 쉬기')+'<label>빠르기 <input id="speed" aria-label="전시 움직임 빠르기" type="range" min=".5" max="2" step=".1" value="'+speed+'"></label></div>' : '';
+  const controls = view === 'float' ? '<div class="row tabs">'+[['bob','사뿐사뿐'],['orbit','우주 여행'],['train','그림 기차'],['carousel','회전목마']].map(([id,label])=>btn('motion-'+id,label,motion===id?'primary':'')).join('')+btn('pause',paused?'움직임 재생':'움직임 쉬기')+'<label>빠르기 <input id="speed" aria-label="전시 움직임 빠르기" type="range" min=".5" max="2" step=".1" value="'+speed+'"></label></div>' : '';
   let quiz = '<p>제출된 그림을 골라 퀴즈를 열 수 있어요.</p>';
   if (active) {
     quiz = '<img class="preview" src="'+escape(active.img)+'" alt="퀴즈 작품"><p><strong>'+artwork(index)+'</strong></p>';
@@ -157,7 +157,7 @@ function renderTeacher() {
     else if (room.quiz.revealed) quiz += '<p>정답 <strong>'+escape(active.answer)+'</strong></p>'+btn('quiz-end','다음 작품으로','primary');
     else quiz += '<p>응답 '+Object.keys(room.quiz.votes).length+'명 / '+room.roster.length+'명</p>'+btn('quiz-reveal','정답 공개','primary');
   }
-  app.insertAdjacentHTML('beforeend',controls+'<div class="board"><section class="gallery '+(paused||view==='list'?'paused':'')+'" data-motion="'+motion+'" style="--speed:'+3.8/speed+'s"><p class="eyebrow">우리 반 작품 '+items.length+'점 · DRAW. FLOAT. DISCOVER.</p><div class="eggs">'+gallery+'</div></section><aside class="card"><h2>퀴즈 작품 선택</h2>'+quiz+'</aside></div>');
+  app.insertAdjacentHTML('beforeend',controls+'<div class="board"><section class="gallery '+(paused||view==='list'?'paused':'')+'" data-motion="'+motion+'" style="--speed:'+3.8/speed+'s"><p class="eyebrow">우리 반 작품 '+items.length+'점 · DRAW. SHARE. SMILE.</p><div class="eggs">'+gallery+'</div></section><aside class="card"><h2>퀴즈 작품 선택</h2>'+quiz+'</aside></div>');
 }
 function invite() {
   const url = new URL(location.href);
@@ -346,7 +346,7 @@ function importRoom() {
       const restored = validateBackup(JSON.parse(await file.text())); if (!restored) throw Error();
       restored.code=crypto.randomUUID().replaceAll('-','').slice(0,8).toUpperCase();
       modal.close(); startTeacher(restored); invite();
-    } catch { if ($('#import-status')) $('#import-status').textContent='이 그림교실에서 저장한 백업 파일을 선택해 주세요.'; }
+    } catch { if ($('#import-status')) $('#import-status').textContent='이 전시회에서 저장한 백업 파일을 선택해 주세요.'; }
   };
 }
 function practice() {
@@ -367,7 +367,7 @@ $('#home').onclick = () => {
   if (role==='teacher'&&!demo&&links.size&&!confirm('처음으로 돌아가면 학생 연결이 끊겨요. 돌아갈까요?')) return;
   if (modal.open) modal.close(); home();
 };
-$('#help').onclick = () => show('<h2>처음 만나는 그림교실</h2><h3>선생님</h3><ol><li>학생 이름을 한 줄에 한 명씩 넣고 주제와 배정 방식을 정해요.</li><li>초대 QR 또는 링크를 공유하고 교사 화면을 열어두세요.</li><li>그림이 도착하면 작품을 골라 퀴즈를 열고 정답을 공개해요.</li><li>수업이 끝나면 수업 백업을 내려받을 수 있어요.</li></ol><h3>학생</h3><ol><li>초대 링크를 열거나 방 코드를 입력하고 내 이름을 골라요.</li><li>내 그림판에서 그림을 그려 전시회로 보내요.</li><li>작품 감상에서 답을 고르고 정답이 공개되면 하트를 보내요.</li></ol>');
+$('#help').onclick = () => show('<h2>처음 만나는 둥둥 그림 전시회</h2><h3>선생님</h3><ol><li>학생 이름을 한 줄에 한 명씩 넣고 주제와 배정 방식을 정해요.</li><li>초대 QR 또는 링크를 공유하고 교사 화면을 열어두세요.</li><li>그림이 도착하면 작품을 골라 퀴즈를 열고 정답을 공개해요.</li><li>수업이 끝나면 수업 백업을 내려받을 수 있어요.</li></ol><h3>학생</h3><ol><li>초대 링크를 열거나 방 코드를 입력하고 내 이름을 골라요.</li><li>내 그림판에서 그림을 그려 전시회로 보내요.</li><li>작품 감상에서 답을 고르고 정답이 공개되면 하트를 보내요.</li></ol>');
 $('#demo').onclick = () => {
   if (role==='teacher'&&!demo&&links.size&&!confirm('체험을 열면 학생 연결이 끊겨요. 열까요?')) return;
   practice();
