@@ -36,6 +36,7 @@ function setup() {
   screen = 'setup'; template('setup');
   $('#setup-eggs').innerHTML = sampleNames.slice(0,3).map((n,i) => egg(n,portrait(i),i,'sample')).join('');
   const f = $('#create');
+  initRosterImport(f);
   f.addEventListener('input', () => {
     $('#count').textContent = lines(f.elements.names.value).length + '명 입력됨 · 동명이인은 번호로 구분해요';
     $('#topics').hidden = f.elements.theme.value !== 'free';
