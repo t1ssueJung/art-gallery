@@ -12,7 +12,7 @@ const imageOK = value => typeof value === 'string' && value.length <= 1600000 &&
 const btn = (action, label, cls = '') => '<button class="' + cls + '" data-act="' + action + '">' + label + '</button>';
 function load(key, fallback) { try { return JSON.parse(localStorage.getItem(prefix + key)) ?? fallback; } catch { return fallback; } }
 function save(key, value) { try { localStorage.setItem(prefix + key, JSON.stringify(value)); return true; } catch { return false; } }
-function show(html) { body.innerHTML = html; if (!modal.open) modal.showModal(); }
+function show(html) { modal.classList.toggle('presentation-dialog', html.includes('class="presentation"')); body.innerHTML = html; if (!modal.open) modal.showModal(); }
 function template(id) { app.replaceChildren($('#' + id).content.cloneNode(true)); }
 function portrait(i) {
   const hair = ['M20 46Q22 15 51 17Q70 18 78 47M34 25l3 16m6-18 2 16m5-16 3 17','M19 55Q17 33 38 21L48 17Q77 20 80 56M48 19Q43 33 24 45','M21 45Q27 21 49 16l8 10 6-6 15 26'][i % 3];
@@ -28,11 +28,13 @@ function clearConnection() {
   session++; if (peer) peer.destroy(); peer = upstream = null; links.clear(); awaiting = false;
 }
 function home() {
+  stopExhibitionScene(); setPageContext('home');
   clearConnection(); room = view = role = studentId = null; demo = false; screen = 'home';
   template('landing');
   $('#samples').innerHTML = sampleNames.map((name,i) => egg(name,portrait(i),i,'sample')).join('');
 }
 function setup() {
+  stopExhibitionScene(); setPageContext('setup');
   screen = 'setup'; template('setup');
   $('#setup-eggs').innerHTML = sampleNames.slice(0,3).map((n,i) => egg(n,portrait(i),i,'sample')).join('');
   const f = $('#create');
@@ -54,7 +56,7 @@ function makeRoom(title, names, topics, mode, scoring) {
   order.forEach((id,i) => {
     assignments[id] = topics.length ? pool[i % pool.length] : pool[order[(i+1) % order.length]];
   });
-  return {title, roster, pool, assignments, mode, scoring, code:crypto.randomUUID().replaceAll('-','').slice(0,8).toUpperCase(), works:{}, tokens:{}, scores:{}, hearts:{}, quiz:null, created:Date.now()};
+  return {title, roster, pool, assignments, mode, scoring, code:crypto.randomUUID().replaceAll('-','').slice(0,6).toUpperCase(), works:{}, tokens:{}, scores:{}, hearts:{}, quiz:null, lesson:{deadline:null,open:true,allowEdits:true}, created:Date.now()};
 }
 function archiveRoom() {
   if (demo || role !== 'teacher') return;
@@ -105,7 +107,7 @@ function startTeacher(nextRoom, practice = false) {
 function works() { return Object.values(room.works); }
 function snapshot(id) {
   const q = room.quiz;
-  return {title:room.title, mode:room.mode, scoring:room.scoring, code:room.code, pool:room.pool,
+  return {title:room.title, mode:room.mode, scoring:room.scoring, code:room.code, pool:room.pool, lesson:lessonState(),
     mine:room.mode === 'random' ? room.assignments[id] : room.works[id]?.answer,
     sent:!!room.works[id], score:room.scores[id] || 0,
     works:Object.values(room.works).map(w => ({
@@ -113,7 +115,7 @@ function snapshot(id) {
       author:w.revealed ? room.roster.find(p => p.id === w.id)?.name : null,
       hearts:Object.keys(room.hearts[w.id] || {}).length, liked:!!room.hearts[w.id]?.[id]
     })),
-    quiz:q ? {id:q.id, options:q.options, answer:q.revealed ? room.works[q.id].answer : null, vote:q.votes[id]} : null};
+    quiz:q ? {id:q.id, options:q.options, answer:q.revealed ? room.works[q.id].answer : null, vote:q.votes[id], canVote:q.id!==id && q.accepting!==false} : null};
 }
 function broadcast() {
   if (role === 'teacher') renderTeacher();
@@ -121,44 +123,58 @@ function broadcast() {
   for (const [id,link] of links) if (link.open) link.send({type:'state',state:snapshot(id)});
 }
 function applyStudent(id,msg) {
-  if (msg.type === 'work' && imageOK(msg.img) && !room.quiz && !room.works[id]?.revealed) {
+  if (msg.type === 'work' && imageOK(msg.img)) {
+    if (!drawingSubmissionAllowed(room,id)) {
+      links.get(id)?.send({type:'notice',message:'지금은 그림을 제출할 수 없어요. 제출 시간과 수정 가능 여부를 확인해 주세요.'});
+      return false;
+    }
     const answer = room.mode === 'random' ? room.assignments[id] : msg.target;
-    if (!room.pool.includes(answer)) return;
+    if (!room.pool.includes(answer)) return false;
     room.works[id] = {id,img:msg.img,answer,revealed:false};
-  } else if (msg.type === 'vote' && room.quiz && room.quiz.id === msg.id && !room.quiz.revealed && !Object.hasOwn(room.quiz.votes,id) && room.quiz.options.includes(msg.answer)) {
+  } else if (msg.type === 'vote' && room.quiz && room.quiz.id === msg.id && room.quiz.id!==id && room.quiz.accepting!==false && !room.quiz.revealed && !Object.hasOwn(room.quiz.votes,id) && room.quiz.options.includes(msg.answer)) {
     room.quiz.votes[id] = msg.answer;
   } else if (msg.type === 'heart' && room.works[msg.id]?.revealed) {
     const hearts = room.hearts[msg.id] ||= {};
     if (hearts[id]) delete hearts[id]; else hearts[id] = true;
-  } else return;
+  } else return false;
   broadcast();
+  return true;
 }
 function renderTeacher() {
+  stopExhibitionScene(); setPageContext('teacher');
   screen = 'teacher';
   const items = works(), remaining = items.filter(w => !w.revealed);
   selected = Math.max(0,Math.min(selected,remaining.length - 1));
   const active = room.quiz ? room.works[room.quiz.id] : remaining[selected];
   const index = items.indexOf(active);
   const tabs = [['float','둥둥 전시'],['list','작품 감상'],['roster','우리 반'],['scores','퀴즈 점수']];
-  app.innerHTML = '<div class="row tabs">' + tabs.map(([id,label]) => btn('tab-'+id,label,view===id?'primary':'')).join('') + btn('backup','수업 백업') + '</div>' +
+  app.innerHTML = teacherRail(tabs) +
     '<p class="eyebrow">TEACHER’S GALLERY · '+escape(room.title)+' · <span id="host-status">'+escape(hostMessage)+'</span></p>' +
     (demo ? '<div class="banner row">교사 체험 · 예시 작품과 응답은 실제 수업과 분리돼요. '+btn('demo-student','학생 화면도 보기')+'</div>' : '') +
-    '<h1>우리 반 그림이 둥둥 떠올라요.</h1><p>작품 '+items.length+' / '+room.roster.length+'개 · '+(room.mode==='random'?'비밀 랜덤 배정':'자유롭게 선택')+' · '+(room.scoring?'점수 모으기':'함께 맞히기')+'</p>' +
-    '<div class="row">'+btn('invite','초대하기 · '+room.code,'primary')+btn('fullscreen','전체 화면')+' <small id="save-status"></small></div>';
+    '<p class="eyebrow">'+(view==='list'?'A GALLERY OF LITTLE STORIES':view==='roster'?'TOGETHER IN OUR CLASS':view==='scores'?'OUR LITTLE QUIZ':'OUR LITTLE FLOATING WORLD')+'</p><h1>'+({float:'우리 반이 둥둥 떠올라요.',list:'그림마다 이야기가 있어요.',roster:'함께 그리는 우리 반.',scores:'함께 맞히고, 즐겁게 모아요.'}[view])+'</h1><p>작품 '+items.length+' / '+room.roster.length+'개 · '+(room.mode==='random'?'비밀 랜덤 배정':'자유롭게 선택')+' · '+(room.scoring?'점수 모으기':'함께 맞히기')+'</p>' +
+    '<div class="row exhibition-actions">'+lessonControls()+btn('save-drawings','그림 저장')+btn('present-open','작품 발표')+btn('invite','초대하기 · '+room.code,'primary')+btn('fullscreen','전체 화면')+' <small id="save-status"></small></div>';
   if (view === 'roster' || view === 'scores') {
-    app.insertAdjacentHTML('beforeend','<section class="card"><h2>'+(view==='roster'?'우리 반':'퀴즈 점수')+'</h2><ul class="list">'+room.roster.map(p => '<li><strong>'+escape(p.name)+'</strong><span>'+(view==='roster'?(demo||links.has(p.id)?'입장 · ':'')+(room.works[p.id]?'제출 완료':'제출 대기'):(room.scoring?(room.scores[p.id]||0)+'점':'함께 맞히기 모드'))+'</span></li>').join('')+'</ul></section>');
+    const roster=view==='scores'?[...room.roster].sort((a,b)=>(room.scores[b.id]||0)-(room.scores[a.id]||0)):room.roster;
+    app.insertAdjacentHTML('beforeend','<section class="card roster-board"><div class="row"><h2>'+(view==='roster'?'학생 명단':'퀴즈 점수')+'</h2><small>'+(demo?room.roster.length:links.size)+'명 연결</small></div><ul class="list">'+roster.map((p,i) => '<li><span class="avatar">'+(view==='scores'?i+1:escape(p.name.slice(0,1)))+'</span><strong>'+escape(p.name)+'</strong><span class="status-pill">'+(view==='roster'?(room.works[p.id]?'제출 완료':'제출 대기'):(room.scoring?(room.scores[p.id]||0)+'점':'함께 맞히기 모드'))+'</span>'+(view==='roster'?btn('reenter-'+p.id,'재입장'):'')+'</li>').join('')+'</ul></section>');
     return;
   }
+  if (view==='list') {app.insertAdjacentHTML('beforeend',artworkCards(items,true));return;}
   const gallery = items.length ? items.map((w,i) => egg(w.revealed ? w.answer : artwork(i),w.img,i,'work')).join('') : '<p>학생이 그림을 보내면 여기에 떠올라요.</p>';
-  const controls = view === 'float' ? '<div class="row tabs">'+[['bob','사뿐사뿐'],['orbit','우주 여행'],['train','그림 기차'],['carousel','회전목마']].map(([id,label])=>btn('motion-'+id,label,motion===id?'primary':'')).join('')+btn('pause',paused?'움직임 재생':'움직임 쉬기')+'<label>빠르기 <input id="speed" aria-label="전시 움직임 빠르기" type="range" min=".5" max="2" step=".1" value="'+speed+'"></label></div>' : '';
+  const controls = view === 'float' ? '<div class="row tabs theme-controls" role="group" aria-label="전시 방식">'+[['bob','둥둥'],['orbit','우주 여행'],['train','그림 기차'],['carousel','회전목마']].map(([id,label])=>'<button data-act="motion-'+id+'" aria-pressed="'+(motion===id)+'" class="'+(motion===id?'primary':'')+'">'+label+'</button>').join('')+btn('pause',paused?'움직임 재생':'움직임 쉬기')+'<label>빠르기 <input id="speed" aria-label="전시 움직임 빠르기" type="range" min=".5" max="1.8" step=".1" value="'+speed+'"><output id="speed-value">'+speed.toFixed(1)+'×</output></label></div>' : '';
   let quiz = '<p>제출된 그림을 골라 퀴즈를 열 수 있어요.</p>';
   if (active) {
     quiz = '<img class="preview" src="'+escape(active.img)+'" alt="퀴즈 작품"><p><strong>'+artwork(index)+'</strong></p>';
     if (!room.quiz) quiz += '<div class="row">'+btn('prev','←')+' '+(selected+1)+' / '+remaining.length+' '+btn('next','→')+'</div>'+btn('quiz-start','객관식 퀴즈 시작','primary');
-    else if (room.quiz.revealed) quiz += '<p>정답 <strong>'+escape(active.answer)+'</strong></p>'+btn('quiz-end','다음 작품으로','primary');
-    else quiz += '<p>응답 '+Object.keys(room.quiz.votes).length+'명 / '+room.roster.length+'명</p>'+btn('quiz-reveal','정답 공개','primary');
+    else if (room.quiz.revealed) {
+      const correct=Object.values(room.quiz.votes).filter(answer=>answer===active.answer).length;
+      quiz += '<p class="answer-label">정답 공개</p><h3>'+escape(active.answer)+'였어요!</h3><p>'+escape(room.roster.find(p=>p.id===active.id)?.name)+'의 그림이에요.</p><p>'+correct+'명이 맞혔어요!</p>'+btn('quiz-end','다음 작품 선택')+(remaining.length?btn('quiz-next-start','다음 퀴즈 시작','primary'):'<p>모든 작품을 함께 감상했어요.</p>');
+    } else {
+      const responses=Object.keys(room.quiz.votes).length,total=Math.max(0,room.roster.length-1);
+      quiz += '<p class="eyebrow">TODAY’S MYSTERY · '+(room.quiz.accepting===false?'응답 마감':'응답 중')+'</p><h3>누구를 그렸을까요?</h3><p>학생 응답 '+responses+' / '+total+'명</p><progress max="'+Math.max(1,total)+'" value="'+responses+'" aria-label="학생 응답 현황"></progress><ol class="quiz-options">'+room.quiz.options.map(option=>'<li>'+escape(option)+'</li>').join('')+'</ol>'+(demo?btn('demo-fill-votes','체험 응답 채우기'):'')+btn('quiz-reveal','정답 공개하기','primary')+(room.quiz.accepting===false?'':btn('quiz-close-votes','응답만 먼저 마감'));
+    }
   }
-  app.insertAdjacentHTML('beforeend',controls+'<div class="board"><section class="gallery '+(paused||view==='list'?'paused':'')+'" data-motion="'+motion+'" style="--speed:'+3.8/speed+'s"><p class="eyebrow">우리 반 작품 '+items.length+'점 · DRAW. SHARE. SMILE.</p><div class="eggs">'+gallery+'</div></section><aside class="card"><h2>퀴즈 작품 선택</h2>'+quiz+'</aside></div>');
+  app.insertAdjacentHTML('beforeend',controls+'<div class="board"><section class="gallery '+(paused||view==='list'?'paused':'')+'" data-motion="'+motion+'" style="--speed:'+3.8/speed+'s"><p class="eyebrow">우리 반 작품 '+items.length+'점 · DRAW. FLOAT. DISCOVER.</p><div class="eggs">'+gallery+'</div></section><aside class="card quiz-sidebar"><p class="eyebrow">NEXT LITTLE MYSTERY</p><h2>퀴즈 작품 선택</h2><p>남은 '+remaining.length+'점</p>'+quiz+'<details class="work-management"><summary>작품 관리</summary><div class="row">'+btn('delete-work','선택한 작품 삭제')+btn('reveal-all','퀴즈 없이 모두 공개')+'</div></details></aside></div>');
+  if (view==='float') startExhibitionScene($('.gallery'),items);
 }
 function invite() {
   const url = new URL(location.href);
@@ -172,7 +188,7 @@ function invite() {
 function connect(code) {
   code = code.trim().toUpperCase();
   const notice = $('#join-error');
-  if (!/^[0-9A-F]{8}$/.test(code)) { notice.textContent = '8자리 방 코드를 확인해 주세요.'; return; }
+  if (!/^(?:[0-9A-F]{6}|[0-9A-F]{8})$/.test(code)) { notice.textContent = '방 코드를 확인해 주세요. 새 방 코드는 6자리예요.'; return; }
   if (typeof Peer === 'undefined') { notice.textContent = '연결 모듈을 불러오지 못했습니다.'; return; }
   clearConnection(); const current = session; role = 'student';
   notice.textContent = '교사 화면에 연결하는 중…';
@@ -203,6 +219,7 @@ function connect(code) {
     upstream.on('close', () => fail('교사 화면과의 연결이 끊겼어요. 다시 입장해 주세요.'));
     upstream.on('data', msg => {
       if (session !== current) return;
+      if (msg.type==='notice') {awaiting=false;if($('#draw-status'))$('#draw-status').textContent=msg.message;return;}
       if (msg.type === 'lobby') {
         clearTimeout(timer); notice.textContent = '';
         if (previous) { sendClaim(previous.id); return; }
@@ -229,7 +246,8 @@ function receive(state) {
   if (drawing) {
     $('#gallery-tab').textContent = '작품 감상 '+room.works.length;
     $('#draw-score').textContent = room.scoring ? room.score+'점' : '';
-    $('#send').disabled = !!room.quiz || !!room.works.find(w=>w.id===studentId)?.revealed;
+    $('#send').disabled = !drawingSubmissionAllowed(room,studentId);
+    updateLessonClock();
     if (wasAwaiting && room.sent) { view = 'gallery'; renderStudent(); }
     return;
   }
@@ -237,24 +255,33 @@ function receive(state) {
 }
 let demoRoom;
 function renderStudent() {
+  stopExhibitionScene(); setPageContext('student');
   screen = 'student';
   app.innerHTML = (demo ? '<div class="banner row">학생 체험 · 실제 교실에 전송되지 않아요. '+btn('demo-teacher','교사 화면으로')+'</div>' : '')+
     '<p class="eyebrow">'+escape(room.title)+' · <span id="draw-score">'+(room.scoring?room.score+'점':'')+'</span></p><h1>'+(view==='draw'?'친구를 떠올리며, 쓱쓱.':'친구들의 작은 전시회.')+'</h1>'+
-    '<div class="row tabs">'+btn('student-draw','내 그림판',view==='draw'?'primary':'')+'<button id="gallery-tab" data-act="student-gallery" class="'+(view==='gallery'?'primary':'')+'">작품 감상 '+room.works.length+'</button></div><div id="student-content"></div>';
+    '<div class="row tabs">'+btn('student-draw','내 그림판',view==='draw'?'primary':'')+'<button id="gallery-tab" data-act="student-gallery" class="'+(view==='gallery'?'primary':'')+'">작품 감상 '+room.works.length+'</button></div>'+studentLessonStatus()+'<div id="student-content"></div>';
   if (view === 'draw') {
     $('#student-content').append($('#drawing').content.cloneNode(true));
     $('#target').innerHTML = room.mode === 'choose' ? '<label>그리고 싶은 대상<select id="chosen">'+room.pool.map(n=>'<option'+(n===room.mine?' selected':'')+'>'+escape(n)+'</option>').join('')+'</select></label>' : '<p><strong>'+escape(room.mine)+'</strong> 그림을 그려주세요.</p>';
-    $('#send').disabled = !!room.quiz || !!room.works.find(w=>w.id===studentId)?.revealed;
+    $('#send').textContent=room.sent?'수정한 그림 보내기':'전시회로 그림 보내기 →';
+    $('#send').disabled = !drawingSubmissionAllowed(room,studentId);
     initCanvas(); return;
   }
   const q = room.quiz, quizWork = q && room.works.find(w=>w.id===q.id);
   const quiz = quizWork ? '<section class="card"><h2>누구를 그렸을까요?</h2><img class="preview" src="'+escape(quizWork.img)+'" alt="퀴즈 작품">'+
-    (q.answer ? '<p>정답 <strong>'+escape(q.answer)+'</strong></p>' : q.vote ? '<p>내 답 '+escape(q.vote)+' · 정답을 기다려요.</p>' : '<div class="row">'+q.options.map((n,i)=>btn('vote-'+i,escape(n))).join('')+'</div>')+'</section>' : '';
-  $('#student-content').innerHTML = quiz+'<section class="gallery"><div class="eggs">'+room.works.map((w,i)=>'<div>'+egg(w.answer||artwork(i),w.img,i,'work')+(w.revealed?btn('heart-'+i,(w.liked?'♥ ':'♡ ')+w.hearts):'')+'</div>').join('')+'</div>'+(room.works.length?'':'<p>아직 도착한 그림이 없어요.</p>')+'</section>';
+    (q.answer ? '<p>정답 <strong>'+escape(q.answer)+'</strong></p>' : q.vote ? '<p>내 답 '+escape(q.vote)+' · 정답을 기다려요.</p>' : !q.canVote ? '<p>'+(q.id===studentId?'내가 그린 작품이에요. 친구들의 응답을 기다려요.':'응답이 마감되었어요. 정답 공개를 기다려요.')+'</p>' : '<div class="row">'+q.options.map((n,i)=>btn('vote-'+i,escape(n))).join('')+'</div>')+'</section>' : '';
+  $('#student-content').innerHTML = quiz+artworkCards(room.works);
 }
 function studentAction(msg) {
   if (demo) {
-    room = demoRoom; applyStudent(studentId,msg); receive(snapshot(studentId)); return;
+    room = demoRoom;
+    const accepted=applyStudent(studentId,msg);
+    if (msg.type==='work' && !accepted) {
+      awaiting=false;receive(snapshot(studentId));
+      if($('#draw-status'))$('#draw-status').textContent='지금은 그림을 제출할 수 없어요. 제출 시간을 확인해 주세요.';
+      return;
+    }
+    receive(snapshot(studentId)); return;
   }
   if (upstream?.open) upstream.send(msg);
   else { awaiting = false; show('<h2>연결이 끊겼어요</h2><p>교사 화면이 열려 있는지 확인해 주세요.</p>'); }
@@ -328,13 +355,13 @@ function download(content,filename) {
 function validateBackup(data) {
   if (data?.version !== 1) return null;
   const r=data.room;
-  if (!r || typeof r.title!=='string' || !/^[A-F0-9]{8}$/.test(r.code) || !['choose','random'].includes(r.mode) ||
+  if (!r || typeof r.title!=='string' || !/^(?:[A-F0-9]{6}|[A-F0-9]{8})$/.test(r.code) || !['choose','random'].includes(r.mode) ||
     !Array.isArray(r.roster) || !r.roster.length || r.roster.length>40 ||
     !r.roster.every((p,i)=>p?.id===String(i)&&typeof p.name==='string') ||
     !Array.isArray(r.pool) || !r.pool.length || !r.pool.every(n=>typeof n==='string') ||
     !r.roster.every(p=>r.pool.includes(r.assignments?.[p.id])) ||
     !r.works || !Object.values(r.works).every(w=>r.roster.some(p=>p.id===w?.id)&&imageOK(w.img)&&r.pool.includes(w.answer))) return null;
-  const clean = {...r, works:Object.fromEntries(Object.values(r.works).map(w=>[w.id,w])), quiz:null,tokens:{},scores:{},hearts:{}};
+  const clean = {...r, works:Object.fromEntries(Object.values(r.works).map(w=>[w.id,w])), quiz:null,tokens:{},scores:{},hearts:{},lesson:{deadline:null,open:true,allowEdits:true}};
   for (const p of r.roster) if (Number.isSafeInteger(r.scores?.[p.id])) clean.scores[p.id]=r.scores[p.id];
   return clean;
 }
@@ -345,7 +372,7 @@ function importRoom() {
     try {
       if (file.size>65e6) throw Error();
       const restored = validateBackup(JSON.parse(await file.text())); if (!restored) throw Error();
-      restored.code=crypto.randomUUID().replaceAll('-','').slice(0,8).toUpperCase();
+      restored.code=crypto.randomUUID().replaceAll('-','').slice(0,6).toUpperCase();
       modal.close(); startTeacher(restored); invite();
     } catch { if ($('#import-status')) $('#import-status').textContent='이 전시회에서 저장한 백업 파일을 선택해 주세요.'; }
   };
@@ -368,7 +395,7 @@ $('#home').onclick = () => {
   if (role==='teacher'&&!demo&&links.size&&!confirm('처음으로 돌아가면 학생 연결이 끊겨요. 돌아갈까요?')) return;
   if (modal.open) modal.close(); home();
 };
-$('#help').onclick = () => show('<h2>처음 만나는 둥둥 그림 전시회</h2><h3>선생님</h3><ol><li>학생 이름을 한 줄에 한 명씩 넣고 주제와 배정 방식을 정해요.</li><li>초대 QR 또는 링크를 공유하고 교사 화면을 열어두세요.</li><li>그림이 도착하면 작품을 골라 퀴즈를 열고 정답을 공개해요.</li><li>수업이 끝나면 수업 백업을 내려받을 수 있어요.</li></ol><h3>학생</h3><ol><li>초대 링크를 열거나 방 코드를 입력하고 내 이름을 골라요.</li><li>내 그림판에서 그림을 그려 전시회로 보내요.</li><li>작품 감상에서 답을 고르고 정답이 공개되면 하트를 보내요.</li></ol>');
+$('#help').onclick = () => { tutorialRole=role==='student'?'student':'teacher'; tutorialStep=0; showTutorial(); };
 $('#demo').onclick = () => {
   if (role==='teacher'&&!demo&&links.size&&!confirm('체험을 열면 학생 연결이 끊겨요. 열까요?')) return;
   practice();
@@ -388,11 +415,13 @@ document.addEventListener('submit',event=>{
 document.addEventListener('input',event=>{
   if (event.target.id!=='speed') return;
   speed=Number(event.target.value); $('.gallery').style.setProperty('--speed',3.8/speed+'s');
+  $('#speed-value').textContent=speed.toFixed(1)+'×';
 });
 document.addEventListener('click',async event=>{
   const control=event.target.closest('[data-act]');
   if (!control) return;
   const act=control.dataset.act, i=Number(control.dataset.i);
+  if (await handleExhibitionAction(act)) return;
   if (act==='setup') setup();
   if (act==='help') $('#help').click();
   if (act==='sample') show('<h2>'+sampleNames[i]+'의 예시 작품</h2><img class="preview" alt="예시 그림" src="'+escape(portrait(i))+'">');
@@ -417,19 +446,26 @@ document.addEventListener('click',async event=>{
   if (act==='pause') { paused=!paused; renderTeacher(); }
   if (act==='prev'||act==='next') { selected+=act==='prev'?-1:1; renderTeacher(); }
   if (act==='work') openWork(i);
-  if ((act==='quiz-start'||act==='pick-quiz')&&!room.quiz) {
+  if (act==='select-work' && role==='teacher' && !room.quiz) {
+    const id=works()[i]?.id;
+    const next=works().filter(work=>!work.revealed).findIndex(work=>work.id===id);
+    if(next!==-1){selected=next;renderTeacher();}
+    else openWork(i);
+  }
+  if (act==='quiz-next-start' && role==='teacher' && room.quiz?.revealed) room.quiz=null;
+  if ((act==='quiz-start'||act==='pick-quiz'||act==='quiz-next-start')&&!room.quiz) {
     const w=act==='pick-quiz'?works()[i]:works().filter(w=>!w.revealed)[selected];
     if (!w || w.revealed) return;
     const wrong=[...new Set(room.pool)].filter(n=>n!==w.answer).map(n=>({n,rand:Math.random()})).sort((a,b)=>a.rand-b.rand).slice(0,3).map(x=>x.n);
     const options=[w.answer,...wrong];
     const offset=Math.floor(Math.random()*options.length);
-    room.quiz={id:w.id,options:options.slice(offset).concat(options.slice(0,offset)),votes:{},revealed:false};
+    room.quiz={id:w.id,options:options.slice(offset).concat(options.slice(0,offset)),votes:{},revealed:false,accepting:true};
     if (modal.open) modal.close(); broadcast();
   }
   if (act==='quiz-reveal'&&room.quiz&&!room.quiz.revealed) {
     const q=room.quiz, w=room.works[q.id]; q.revealed=w.revealed=true;
     if (room.scoring) for (const [id,answer] of Object.entries(q.votes)) if (answer===w.answer) room.scores[id]=(room.scores[id]||0)+1;
-    broadcast();
+    soundEffect(); broadcast();
   }
   if (act==='quiz-end'&&room.quiz?.revealed) { room.quiz=null; broadcast(); }
   if (act==='demo-student') {
@@ -442,5 +478,6 @@ document.addEventListener('click',async event=>{
   if (act.startsWith('heart-')) studentAction({type:'heart',id:room.works[Number(act.slice(6))].id});
 });
 home();
+setInterval(updateLessonClock,500);
 const initialCode = new URLSearchParams(location.search).get('room');
 if (initialCode) { $('#code').value=initialCode; connect(initialCode); }
